@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config();
+dotenv.config()
 
 import express from "express";
 import morgan from "morgan";
@@ -7,7 +7,7 @@ import Blockchain from "../lib/blockchain";
 import Block from "../lib/block";
 import Validation from "../lib/validation";
 
-const PORT: number = parseInt(`${process.env.BLOCKCHAIN_PORT || "3000"}`);
+const PORT: number = parseInt(`${process.env.BLOCKCHAIN_PORT}`);
 
 const app = express();
 
