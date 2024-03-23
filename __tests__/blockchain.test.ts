@@ -1,59 +1,162 @@
-import Block from "../src/lib/block";
+import ECPairFactory, { ECPairInterface } from "ecpair";
+import * as ecc from "tiny-secp256k1";
 import Blockchain from "../src/lib/blockchain";
+import Block from "../src/lib/block";
+import Transaction from "../src/lib/transaction";
+import TransactionInput from "../src/lib/transactionInput";
+import TransactionType from "../src/lib/transactionType";
 
-describe("Blockchain tests", () => {
-  test("Should has genesis block", () => {
-    const blockchain = new Blockchain();
-    expect(blockchain.blocks.length).toBe(1);
-    expect(blockchain.blocks[0].index).toBe(0);
-    expect(blockchain.blocks[0].data).toBe("Genesis Block");
+const ECPair = ECPairFactory(ecc);
+
+describe("Blockchain", () => {
+  let privateKey: string;
+  let publicKey: string;
+  let blockchain: Blockchain;
+  let transaction: Transaction;
+  let block: Block;
+
+  beforeEach(() => {
+    const keyPair = ECPair.makeRandom();
+    privateKey = keyPair.privateKey?.toString("hex") || "";
+    publicKey = keyPair.publicKey.toString("hex");
+
+    blockchain = new Blockchain();
+    transaction = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: new TransactionInput({
+        fromAddress: publicKey,
+        amount: 10,
+      } as TransactionInput),
+    } as Transaction);
+    transaction.txInput.sign(privateKey);
+
+    block = new Block({
+      index: 1,
+      previousHash: "",
+      transactions: [transaction],
+    } as Block);
   });
 
-  test("Should be valid", () => {
-    const blockchain = new Blockchain();
-    expect(blockchain.isValid().success).toBeTruthy();
+  it("should add a valid transaction", () => {
+    const validation = blockchain.addTransaction(transaction);
+    expect(validation.success).toBe(true);
+    expect(blockchain.memPool).toContain(transaction);
   });
 
-  test("addBlock", () => {
-    const blockchain = new Blockchain();
-    const newBlock = new Block(1, blockchain.getLastBlock().hash, "data1");
-    newBlock.mine(0, "miner");
-    const ret = blockchain.addBlock(newBlock);
-    expect(ret.success).toBeTruthy();
+  it("should not add an invalid transaction", () => {
+    transaction.to = "";
+    const validation = blockchain.addTransaction(transaction);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe("Invalid transaction: Invalid to");
   });
 
-  test("Blockchain Should be invalid", () => {
-    const blockchain = new Blockchain();
-    const newBlock = new Block(1, blockchain.getLastBlock().hash, "data1");
-    newBlock.mine(0, "miner");
-    const r = blockchain.addBlock(newBlock);
-    blockchain.blocks[1].data = "data2";
-    const validation = blockchain.isValid();
-    expect(validation.success).toBeFalsy();
+  it("should not add a duplicated transaction in blockchain", () => {
+    blockchain.blocks[0].transactions.push(transaction);
+    const validation = blockchain.addTransaction(transaction);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe("Duplicated tx in blockchain");
   });
 
-  test("addBlock invalid", () => {
-    const blockchain = new Blockchain();
-    const newBlock = new Block(1, "", "data1");
-    const ret = blockchain.addBlock(newBlock);
-    expect(ret.success).toBeFalsy();
+  it("should not add a duplicated transaction in mempool", () => {
+    blockchain.memPool.push(transaction);
+    const validation = blockchain.addTransaction(transaction);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe("Duplicated tx in mempool");
   });
 
-  test("getBlock by hash", () => {
-    const blockchain = new Blockchain();
-    const block = blockchain.getBlock(blockchain.blocks[0].hash);
-    expect(block).toBeTruthy();
+  it("should add a valid block", () => {
+    blockchain.addTransaction(transaction);
+    const blockinfo = blockchain.getNextBlock();
+    if (!blockinfo) throw new Error("Blockinfo is undefined");
+
+    const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.mine(blockchain.getDifficulty(), publicKey);
+
+    const validation = blockchain.addBlock(newBlock);
+    expect(validation.success).toBe(true);
+    expect(blockchain.blocks).toContain(newBlock);
   });
 
-  test("getBlock not found by hash", () => {
-    const blockchain = new Blockchain();
-    const block = blockchain.getBlock("a");
-    expect(block).toBeFalsy();
+  it("should not add an invalid block", () => {
+    block.timestamp = 0;
+    const validation = blockchain.addBlock(block);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe("Invalid timestamp");
   });
 
-  test("getNextBlock", () => {
-    const blockchain = new Blockchain();
-    const blockInfo = blockchain.getNextBlock();
-    expect(blockInfo.index).toBe(1);
+  it("should not add a block with transactions not in the mempool", () => {
+    blockchain.addTransaction(transaction);
+    const blockinfo = blockchain.getNextBlock();
+    if (!blockinfo) throw new Error("Blockinfo is undefined");
+    const newBlock = Block.fromBlockInfo(blockinfo);
+
+    const transaction2 = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: new TransactionInput({
+        fromAddress: publicKey,
+        amount: 10,
+      } as TransactionInput),
+    } as Transaction);
+    transaction2.txInput.sign(privateKey);
+    newBlock.transactions.push(transaction2);
+
+    newBlock.mine(blockchain.getDifficulty(), publicKey);
+
+    const validation = blockchain.addBlock(newBlock);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe("Some transactions are not in the mempool");
+  });
+
+  it("should get a block by hash", () => {
+    blockchain.addTransaction(transaction);
+    const blockinfo = blockchain.getNextBlock();
+    if (!blockinfo) throw new Error("Blockinfo is undefined");
+
+    const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.mine(blockchain.getDifficulty(), publicKey);
+    blockchain.addBlock(newBlock);
+
+    const retrievedBlock = blockchain.getBlock(newBlock.hash);
+    expect(retrievedBlock).toEqual(newBlock);
+  });
+
+  it("should return undefined if block does not exist", () => {
+    const retrievedBlock = blockchain.getBlock("nonexistentHash");
+    expect(retrievedBlock).toBeUndefined();
+  });
+
+  it('should get a transaction by hash in mempool', () => {
+    blockchain.memPool.push(transaction);
+    const retrievedTransaction = blockchain.getTransaction(transaction.hash);
+    expect(retrievedTransaction.memPoolIndex).toBeGreaterThan(-1);
+  });
+
+  it('should get a transaction by hash in blocks', () => {
+    blockchain.blocks.push(block);
+    const retrievedTransaction = blockchain.getTransaction(transaction.hash);
+    expect(retrievedTransaction.blockIndex).toBeGreaterThan(-1);
+  });
+
+  it('should return undefined if transaction does not exist', () => {
+    const retrievedTransaction = blockchain.getTransaction('nonexistentId');
+    expect(retrievedTransaction.memPoolIndex).toBe(-1);
+  });
+
+  it('should return true for a valid blockchain', () => {
+    const isValid = blockchain.isValid();
+    expect(isValid.success).toBe(true);
+  });
+
+  it('should return false for an invalid blockchain', () => {
+    blockchain.blocks.push(new Block());
+    const isValid = blockchain.isValid();
+    expect(isValid.success).toBe(false);
+  });
+
+  it('should return undefined if mempool is empty', () => {
+    const nextBlock = blockchain.getNextBlock();
+    expect(nextBlock).toBe(null);
   });
 });

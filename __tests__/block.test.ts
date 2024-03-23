@@ -1,61 +1,114 @@
+import ECPairFactory, { ECPairInterface } from "ecpair";
+import * as ecc from "tiny-secp256k1";
 import Block from "../src/lib/block";
 import BlockInfo from "../src/lib/blockInfo";
+import Transaction from "../src/lib/transaction";
+import TransactionInput from "../src/lib/transactionInput";
+import TransactionType from "../src/lib/transactionType";
 
-const DIFFICULT = 0;
-const MINER = "minerExample";
+const ECPair = ECPairFactory(ecc);
 
-describe("block", () => {
-  test("Should be valid", () => {
-    const blockTest = new Block(1, "previousHash", "data1");
+describe('Block', () => {
+  let privateKey: string;
+  let publicKey: string;
+  let transaction: Transaction;
+  let block: Block;
 
-    blockTest.mine(DIFFICULT, MINER);
+  beforeEach(() => {
+    const keyPair = ECPair.makeRandom();
+    privateKey = keyPair.privateKey?.toString("hex") || "";
+    publicKey = keyPair.publicKey.toString("hex");
 
-    expect(blockTest).toBeTruthy();
-    const validation = blockTest.isValid(0, "previousHash", 0);
-    expect(validation.success).toBeTruthy();
-  });
+    transaction = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: new TransactionInput({
+        fromAddress: publicKey,
+        amount: 10,
+      } as TransactionInput),
+    } as Transaction);
+    transaction.txInput.sign(privateKey);
 
-  test("Should be invalid - index", () => {
-    const blockTest = new Block(-1, "previousHash", "data");
-    const validation = blockTest.isValid(0, "previousHash", 0);
-    expect(validation.success).toBeFalsy();
-  });
-
-  test("Should be invalid - data", () => {
-    const blockTest = new Block(1, "previousHash", "");
-    const validation = blockTest.isValid(0, "previousHash", 0);
-    expect(validation.success).toBeFalsy();
-  });
-
-  test("Should be invalid - previousIndex", () => {
-    const blockTest = new Block(1, "previousHash", "data");
-    const validation = blockTest.isValid(1, "previousHash", 0);
-    expect(validation.success).toBeFalsy();
-  });
-
-  test("Should be invalid - previousHash", () => {
-    const blockTest = new Block(1, "", "data");
-    const validation = blockTest.isValid(0, "previousHash", 0);
-    expect(validation.success).toBeFalsy();
-  });
-
-  test("Should be invalid - hash", () => {
-    const blockTest = new Block(1, "previousHash", "data");
-    blockTest.data = "data2";
-    const validation = blockTest.isValid(0, "previousHash", 0);
-    expect(validation.success).toBeFalsy();
-  });
-
-  test("fromBlockInfo", () => {
-    const blockInfo: BlockInfo = {
+    block = new Block({
       index: 1,
       previousHash: "",
-      difficulty: 1,
+      transactions: [transaction],
+    } as Block);
+    block.mine(0, publicKey);
+  });
+
+  it('should create a new block', () => {
+    expect(block).toBeTruthy();
+  });
+
+  it('should mine a block', () => {
+    block.mine(0, publicKey);
+    expect(block.hash).toBeTruthy();
+    expect(block.miner).toBe(publicKey);
+  });
+
+  it('should validate a block', () => {
+    const previousIndex = 0;
+    const previousHash = block.previousHash;
+    const difficulty = 2;
+    block.mine(difficulty, publicKey);
+    const validation = block.isValid(previousIndex, previousHash, difficulty);
+    expect(validation.success).toBe(true);
+  });
+
+  it('should create a new block from BlockInfo', () => {
+    const blockInfo: BlockInfo = {
+      index: 0,
+      previousHash: "",
+      difficulty: 0,
       maxDifficulty: 1,
-      feePerTx: 1,
-      data: "",
-    };
-    const block = Block.fromBlockInfo(blockInfo);
-    expect(block.index).toBe(blockInfo.index);
+      feePerTx: 1
+    } as BlockInfo;
+    
+    const newBlock = Block.fromBlockInfo(blockInfo);
+    
+    expect(newBlock.index).toBe(blockInfo.index);
+    expect(newBlock.previousHash).toBe(blockInfo.previousHash);
+  });
+  
+  it('should return false when there are no transactions', () => {
+    block.transactions = [];
+    const validation = block.isValid(0, block.previousHash, 2);
+    expect(validation.success).toBe(false);
+    expect(validation.message).toBe('No transactions');
+  });
+  
+  it('should return false by Invalid previousIndex', () => {
+    const validation = block.isValid(1, "", 0);
+    expect(validation.message).toBe("Invalid previousIndex");
+  });
+
+  it('should return false by Invalid timestamp', () => {
+    block.timestamp = 0;
+    const validation = block.isValid(0, "", 0);
+    expect(validation.message).toBe("Invalid timestamp");
+  });
+
+  it('should return false by Invalid previousHash', () => {
+    const validation = block.isValid(0, "x", 0);
+    expect(validation.message).toBe("Invalid previousHash");
+  });
+
+  it('should return false by No mined block', () => {
+    block.miner = undefined;
+    const validation = block.isValid(0, "", 0);
+    expect(validation.message).toBe("No mined block");
+  });
+
+  it('should return false by Invalid hash', () => {
+    block.hash = "";
+    const validation = block.isValid(0, "", 0);
+    expect(validation.message).toBe("Invalid hash");
+  });
+
+  it('should return false by Invalid transactions', () => {
+    block.transactions = [new Transaction({ type: TransactionType.FEE } as Transaction)];
+    const validation = block.isValid(0, "", 0);
+    expect(validation.message).toContain("Invalid transactions");
   });
 });

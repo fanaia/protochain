@@ -1,11 +1,12 @@
 import dotenv from "dotenv";
-dotenv.config()
+dotenv.config();
 
 import express from "express";
 import morgan from "morgan";
 import Blockchain from "../lib/blockchain";
 import Block from "../lib/block";
 import Validation from "../lib/validation";
+import Transaction from "../lib/transaction";
 
 const PORT: number = parseInt(`${process.env.BLOCKCHAIN_PORT}`);
 
@@ -18,11 +19,33 @@ const blockchain = new Blockchain();
 
 app.get("/status", (req, res, next) => {
   res.json({
+    mempool: blockchain.memPool.length,
+    blocks: blockchain.blocks.length,
     isValid: blockchain.isValid().success,
-    numberOfBlocks: blockchain.blocks.length,
     lastBlock: blockchain.getLastBlock(),
     difficulty: blockchain.getDifficulty(),
   });
+});
+
+app.get("/transactions/:hash?", (req, res, next) => {
+  if (req.params.hash) {
+    return res.json(blockchain.getTransaction(req.params.hash));
+  } else {
+    return res.json({
+      next: blockchain.memPool.slice(0, Blockchain.TX_PER_BLOCK),
+      total: blockchain.memPool.length,
+    });
+  }
+});
+
+app.post("/transactions", (req, res, next) => {
+  if (req.body.hash === undefined) return res.status(422).send({ message: "Undefined hash" });
+
+  const tx = new Transaction(req.body as Transaction);
+
+  const validation: Validation = blockchain.addTransaction(tx);
+  if (validation.success) return res.status(201).json(tx);
+  else return res.status(400).json({ message: "Tx validation failed", validation });
 });
 
 app.get("/blocks/next", (req, res, next) => {
@@ -46,19 +69,12 @@ app.post("/blocks", (req, res, next) => {
   if (!req.body.index || isNaN(parseFloat(req.body.index)))
     return res.status(422).send({ message: "Invalid index" });
 
-  const newBlock = new Block(
-    req.body.index,
-    req.body.previousHash,
-    req.body.data,
-    req.body.timestamp,
-    req.body.hash,
-    req.body.nonce,
-    req.body.miner
-  );
-  const validation: Validation = blockchain.addBlock(newBlock);
-  if (validation.success) return res.status(201).json(newBlock);
+  const block = new Block(req.body as Block);
+
+  const validation: Validation = blockchain.addBlock(block);
+  if (validation.success) return res.status(201).json(block);
   else return res.status(400).json({ message: "Block validation failed", validation });
-});
+}); 
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

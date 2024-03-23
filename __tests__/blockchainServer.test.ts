@@ -1,66 +1,156 @@
+import ECPairFactory, { ECPairInterface } from "ecpair";
+import * as ecc from "tiny-secp256k1";
 import request from "supertest";
 import { app } from "../src/server/blockchainServer";
+import Blockchain from "../src/lib/blockchain";
+import Transaction from "../src/lib/transaction";
+import TransactionType from "../src/lib/transactionType";
+import TransactionInput from "../src/lib/transactionInput";
 import Block from "../src/lib/block";
+import BlockInfo from "../src/lib/blockInfo";
 
-beforeAll(() => {
-  // app.listen(3000);
-});
+const ECPair = ECPairFactory(ecc);
 
-let block0: Block;
+describe("Blockchain Server", () => {
+  let privateKey: string;
+  let publicKey: string;
+  let blockchain: Blockchain;
 
-describe("blockchainServer", () => {
-  test("GET /status", async () => {
-    const response = await request(app).get("/status");
-    expect(response.status).toEqual(200);
-    expect(response.body.numberOfBlocks).toEqual(1);
+  beforeEach(() => {
+    const keyPair = ECPair.makeRandom();
+    privateKey = keyPair.privateKey?.toString("hex") || "";
+    publicKey = keyPair.publicKey.toString("hex");
+
+    blockchain = new Blockchain();
+
+    // Adicione algumas transações ao memPool
+    for (let i = 0; i < 5; i++) {
+      const txInput = new TransactionInput({
+        fromAddress: publicKey,
+        amount: 10,
+      } as TransactionInput);
+      txInput.sign(privateKey);
+
+      const tx = new Transaction({
+        type: TransactionType.REGULAR,
+        to: publicKey,
+        txInput: txInput,
+      } as Transaction);
+
+      blockchain.addTransaction(tx);
+    }
+
+    // Adicione alguns blocos à blockchain
+    for (let i = 0; i < 5; i++) {
+      const block = new Block({
+        index: i,
+        timestamp: Date.now(),
+        transactions: blockchain.memPool.slice(
+          i * Blockchain.TX_PER_BLOCK,
+          (i + 1) * Blockchain.TX_PER_BLOCK
+        ),
+        previousHash: blockchain.getLastBlock().hash,
+      } as Block);
+      blockchain.addBlock(block);
+    }
   });
 
-  test("GET /blocks/next", async () => {
-    const response = await request(app).get("/blocks/next");
-    expect(response.status).toEqual(200);
-    expect(response.body.index).toEqual(1);
+  it("GET /status", async () => {
+    const res = await request(app).get("/status");
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty("mempool");
+    expect(res.body).toHaveProperty("blocks");
+    expect(res.body).toHaveProperty("isValid");
+    expect(res.body).toHaveProperty("lastBlock");
+    expect(res.body).toHaveProperty("difficulty");
   });
 
-  test("GET /blocks/:indexOrHash by index", async () => {
-    const response = await request(app).get("/blocks/0");
-    block0 = response.body;
-    expect(response.status).toEqual(200);
-    expect(block0.data).toEqual("Genesis Block");
+  it("GET /transactions/:hash", async () => {
+    const res = await request(app).get("/transactions/test-hash");
+    expect(res.statusCode).toEqual(200);
   });
 
-  test("GET /blocks/:indexOrHash by hash", async () => {
-    const response = await request(app).get(`/blocks/${block0.hash}`);
-    expect(response.status).toEqual(200);
-    expect(response.body.index).toEqual(0);
+  it("GET /transactions", async () => {
+    const res = await request(app).get("/transactions");
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty("next");
+    expect(res.body).toHaveProperty("total");
   });
 
-  test("GET /blocks/:indexOrHash not found", async () => {
-    const response = await request(app).get("/blocks/10");
-    expect(response.status).toEqual(404);
+  it("POST /transactions", async () => {
+    const txInput = new TransactionInput({
+      fromAddress: publicKey,
+      amount: 10,
+    } as TransactionInput);
+    txInput.sign(privateKey);
+
+    const tx = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: txInput,
+    } as Transaction);
+
+    const res = await request(app).post("/transactions").send(tx);
+    expect(res.statusCode).toEqual(201);
   });
 
-  test("POST /blocks valid", async () => {
-    const newBlock = new Block(1, block0.hash, "block2");
-    await newBlock.mine(0, "miner");
-    const response = await request(app).post("/blocks/").send(newBlock);
-    expect(response.status).toEqual(201);
+  it("POST /transactions with invalid tx", async () => {
+    const txInput = new TransactionInput({
+      fromAddress: publicKey,
+      amount: 10,
+    } as TransactionInput);
+
+    const tx = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: txInput,
+    } as Transaction);
+
+    const res = await request(app).post("/transactions").send(tx);
+    expect(res.statusCode).toEqual(400);
   });
 
-  test("POST /blocks invalid index", async () => {
-    const response = await request(app).post("/blocks/").send({
-      index: "x",
-      previousHash: block0.hash,
-      data: "block2",
-    });
-    expect(response.status).toEqual(422);
+  it("GET /blocks/next", async () => {
+    const res = await request(app).get("/blocks/next");
+    expect(res.statusCode).toEqual(200);
   });
 
-  test("POST /blocks invalid", async () => {
-    const response = await request(app).post("/blocks/").send({
-      index: 1,
-      previousHash: block0.hash,
-      data: "block2 fail",
-    });
-    expect(response.status).toEqual(400);
+  it("GET /blocks/:indexOrHash by index", async () => {
+    const res = await request(app).get(`/blocks/0`);
+    expect(res.statusCode).toEqual(200);
+  });
+
+  it("GET /blocks/:indexOrHash by hash", async () => {
+    const res1 = await request(app).get(`/blocks/0`);
+    const res2 = await request(app).get(`/blocks/${res1.body.hash}`);
+    expect(res2.statusCode).toEqual(200);
+  });
+
+  it("POST /blocks with valid block", async () => {
+    const tx = new Transaction({
+      type: TransactionType.REGULAR,
+      to: publicKey,
+      txInput: new TransactionInput({
+        fromAddress: publicKey,
+        amount: 10,
+      } as TransactionInput),
+    } as Transaction);
+    tx.txInput.sign(privateKey);
+    await request(app).post("/transactions").send(tx);
+    const resNext = await request(app).get("/blocks/next");
+    const blockinfo = resNext.body as BlockInfo;
+    if (!blockinfo) throw new Error("Blockinfo is undefined");
+
+    const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.mine(blockinfo.difficulty, publicKey);
+
+    const res = await request(app).post("/blocks").send(newBlock);
+    expect(res.statusCode).toEqual(201);
+  });
+
+  it("POST /blocks with invalid index", async () => {
+    const invalidBlock = new Block();
+    const res = await request(app).post("/blocks").send(invalidBlock);
+    expect(res.statusCode).toEqual(422);
   });
 });
