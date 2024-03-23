@@ -4,12 +4,15 @@ dotenv.config();
 import axios from "axios";
 import BlockInfo from "../lib/blockInfo";
 import Block from "../lib/block";
+import Wallet from "../lib/wallet";
+import Transaction from "../lib/transaction";
+import TransactionType from "../lib/transactionType";
 
 const BLOCKCHAIN_SERVER = process.env.BLOCKCHAIN_SERVER;
-const MINER_WALLET = {
-  privateKey: "miner-private-key",
-  publicKey: process.env.MINER_PUBLIC_KEY,
-};
+
+const minerWallet = new Wallet(process.env.MINER_WALLET);
+console.log("Miner wallet: ", minerWallet.publicKey);
+
 let totalMined = 0;
 
 async function mine() {
@@ -25,12 +28,17 @@ async function mine() {
     console.log("Next block to mine: ", blockInfo.index);
 
     const newBlock = Block.fromBlockInfo(blockInfo);
+    newBlock.transactions.push(
+      new Transaction({
+        to: minerWallet.publicKey,
+        type: TransactionType.FEE,
+      } as Transaction)
+    );
+    newBlock.miner = minerWallet.publicKey;
+    newBlock.hash = newBlock.getHash();
 
     console.log("Start mining block: #", newBlock.index);
-
-    //TODO: adicionar tx de recompensa para o minerador
-
-    newBlock.mine(blockInfo.difficulty, MINER_WALLET.publicKey as string);
+    newBlock.mine(blockInfo.difficulty, minerWallet.publicKey as string);
     console.log("Block mined!");
     console.log("Sending mined block to blockchain server...");
 
@@ -50,5 +58,5 @@ async function mine() {
   setTimeout(mine, 1000);
 }
 
-console.log(`Mining in ${BLOCKCHAIN_SERVER} by ${MINER_WALLET.publicKey}`);
+console.log(`Mining in ${BLOCKCHAIN_SERVER}`);
 mine();

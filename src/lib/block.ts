@@ -2,6 +2,7 @@ import sha256 from "crypto-js/sha256";
 import Validation from "./validation";
 import BlockInfo from "./blockInfo";
 import Transaction from "./transaction";
+import TransactionType from "./transactionType";
 
 export default class Block {
   index: number;
@@ -16,7 +17,8 @@ export default class Block {
     this.index = block?.index || 0;
     this.timestamp = block?.timestamp || Date.now();
     this.previousHash = block?.previousHash || "";
-    this.transactions = block?.transactions.map((tx: any) => new Transaction(tx)) as Transaction[];
+    this.transactions =
+      (block?.transactions?.map((tx: any) => new Transaction(tx)) as Transaction[]) || [];
     this.nonce = block?.nonce || 0;
     this.miner = block?.miner || "";
     this.hash = block?.hash || "";
@@ -49,8 +51,12 @@ export default class Block {
     if (!this.transactions || this.transactions.length < 1)
       return new Validation(false, "No transactions");
 
-    // if (this.transactions.filter((tx) => tx.type === TransactionType.FEE).length !== 1)
-    //   return new Validation(false, "Invalid fee transaction");
+    const feeTxs = this.transactions.filter((tx) => tx.type === TransactionType.FEE);
+    if (!feeTxs.length) return new Validation(false, "No fee tx");
+    if (feeTxs.length > 1) return new Validation(false, "Too many fees");
+
+    if (feeTxs[0]!.to !== this.miner)
+      return new Validation(false, "Invalid fee tx: different from miner");
 
     const validationsTx = this.transactions.map((tx) => tx.isValid());
     const errorsTx = validationsTx.filter((v) => !v.success).map((v) => v.message);
@@ -78,4 +84,3 @@ export default class Block {
     return block;
   }
 }
- 

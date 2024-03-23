@@ -7,15 +7,15 @@ export default class Transaction {
   type: TransactionType;
   timestamp: number;
   hash: string;
-  txInput: TransactionInput;
+  txInput: TransactionInput | undefined;
   to: string;
 
   constructor(tx?: Transaction) {
     this.type = tx?.type || TransactionType.REGULAR;
     this.to = tx?.to || "";
     this.timestamp = tx?.timestamp || Date.now();
+    if (tx && tx.txInput) this.txInput = new TransactionInput(tx.txInput);
     this.hash = tx?.hash || this.getHash();
-    this.txInput = new TransactionInput(tx?.txInput) || new TransactionInput();
   }
 
   getHash(): string {

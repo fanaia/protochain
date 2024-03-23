@@ -24,7 +24,7 @@ describe("Transaction", () => {
         amount: 10,
       } as TransactionInput),
     } as Transaction);
-    transaction.txInput.sign(privateKey);
+    transaction.txInput!.sign(privateKey);
   });
 
   it("should create a new transaction with fields null", () => {

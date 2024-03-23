@@ -19,7 +19,7 @@ export default class Wallet {
       }
     else keys = ECPair.makeRandom();
 
-    this.privateKey = keys.privateKey?.toString("hex") || "";
+    this.privateKey = keys.privateKey!.toString("hex");
     this.publicKey = keys.publicKey.toString("hex");
   }
 }

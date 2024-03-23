@@ -21,6 +21,12 @@ describe("Blockchain", () => {
     publicKey = keyPair.publicKey.toString("hex");
 
     blockchain = new Blockchain();
+
+    const txFee = new Transaction({
+      to: publicKey,
+      type: TransactionType.FEE,
+    } as Transaction);
+
     transaction = new Transaction({
       type: TransactionType.REGULAR,
       to: publicKey,
@@ -29,12 +35,13 @@ describe("Blockchain", () => {
         amount: 10,
       } as TransactionInput),
     } as Transaction);
-    transaction.txInput.sign(privateKey);
+    transaction.txInput!.sign(privateKey);
 
     block = new Block({
       index: 1,
       previousHash: "",
-      transactions: [transaction],
+      transactions: [txFee, transaction],
+      miner: publicKey,
     } as Block);
   });
 
@@ -58,11 +65,11 @@ describe("Blockchain", () => {
     expect(validation.message).toBe("Duplicated tx in blockchain");
   });
 
-  it("should not add a duplicated transaction in mempool", () => {
+  it("should not add duplicate wallet in mempool", () => {
     blockchain.memPool.push(transaction);
     const validation = blockchain.addTransaction(transaction);
     expect(validation.success).toBe(false);
-    expect(validation.message).toBe("Duplicated tx in mempool");
+    expect(validation.message).toBe("This wallet has a pending transaction.");
   });
 
   it("should add a valid block", () => {
@@ -71,6 +78,14 @@ describe("Blockchain", () => {
     if (!blockinfo) throw new Error("Blockinfo is undefined");
 
     const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.transactions.push(
+      new Transaction({
+        to: publicKey,
+        type: TransactionType.FEE,
+      } as Transaction)
+    );
+    newBlock.miner = publicKey;
+    newBlock.hash = newBlock.getHash();
     newBlock.mine(blockchain.getDifficulty(), publicKey);
 
     const validation = blockchain.addBlock(newBlock);
@@ -89,9 +104,16 @@ describe("Blockchain", () => {
     blockchain.addTransaction(transaction);
     const blockinfo = blockchain.getNextBlock();
     if (!blockinfo) throw new Error("Blockinfo is undefined");
-    const newBlock = Block.fromBlockInfo(blockinfo);
 
-    const transaction2 = new Transaction({
+    const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.transactions.push(
+      new Transaction({
+        to: publicKey,
+        type: TransactionType.FEE,
+      } as Transaction)
+    );
+
+    const transactionTeste = new Transaction({
       type: TransactionType.REGULAR,
       to: publicKey,
       txInput: new TransactionInput({
@@ -99,9 +121,11 @@ describe("Blockchain", () => {
         amount: 10,
       } as TransactionInput),
     } as Transaction);
-    transaction2.txInput.sign(privateKey);
-    newBlock.transactions.push(transaction2);
+    transactionTeste.txInput!.sign(privateKey);
 
+    newBlock.transactions.push(transactionTeste);
+    newBlock.miner = publicKey;
+    newBlock.hash = newBlock.getHash();
     newBlock.mine(blockchain.getDifficulty(), publicKey);
 
     const validation = blockchain.addBlock(newBlock);
@@ -115,7 +139,16 @@ describe("Blockchain", () => {
     if (!blockinfo) throw new Error("Blockinfo is undefined");
 
     const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.transactions.push(
+      new Transaction({
+        to: publicKey,
+        type: TransactionType.FEE,
+      } as Transaction)
+    );
+    newBlock.miner = publicKey;
+    newBlock.hash = newBlock.getHash();
     newBlock.mine(blockchain.getDifficulty(), publicKey);
+
     blockchain.addBlock(newBlock);
 
     const retrievedBlock = blockchain.getBlock(newBlock.hash);
@@ -127,35 +160,35 @@ describe("Blockchain", () => {
     expect(retrievedBlock).toBeUndefined();
   });
 
-  it('should get a transaction by hash in mempool', () => {
+  it("should get a transaction by hash in mempool", () => {
     blockchain.memPool.push(transaction);
     const retrievedTransaction = blockchain.getTransaction(transaction.hash);
     expect(retrievedTransaction.memPoolIndex).toBeGreaterThan(-1);
   });
 
-  it('should get a transaction by hash in blocks', () => {
+  it("should get a transaction by hash in blocks", () => {
     blockchain.blocks.push(block);
     const retrievedTransaction = blockchain.getTransaction(transaction.hash);
     expect(retrievedTransaction.blockIndex).toBeGreaterThan(-1);
   });
 
-  it('should return undefined if transaction does not exist', () => {
-    const retrievedTransaction = blockchain.getTransaction('nonexistentId');
+  it("should return undefined if transaction does not exist", () => {
+    const retrievedTransaction = blockchain.getTransaction("nonexistentId");
     expect(retrievedTransaction.memPoolIndex).toBe(-1);
   });
 
-  it('should return true for a valid blockchain', () => {
+  it("should return true for a valid blockchain", () => {
     const isValid = blockchain.isValid();
     expect(isValid.success).toBe(true);
   });
 
-  it('should return false for an invalid blockchain', () => {
+  it("should return false for an invalid blockchain", () => {
     blockchain.blocks.push(new Block());
     const isValid = blockchain.isValid();
     expect(isValid.success).toBe(false);
   });
 
-  it('should return undefined if mempool is empty', () => {
+  it("should return undefined if mempool is empty", () => {
     const nextBlock = blockchain.getNextBlock();
     expect(nextBlock).toBe(null);
   });

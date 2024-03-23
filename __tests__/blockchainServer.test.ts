@@ -94,6 +94,12 @@ describe("Blockchain Server", () => {
     expect(res.statusCode).toEqual(201);
   });
 
+  it("POST /transactions Undefined hash", async () => {
+    const res = await request(app).post("/transactions").send({});
+    expect(res.statusCode).toEqual(422);
+    expect(res.body.message).toContain("Undefined hash");
+  });
+
   it("POST /transactions with invalid tx", async () => {
     const txInput = new TransactionInput({
       fromAddress: publicKey,
@@ -126,6 +132,11 @@ describe("Blockchain Server", () => {
     expect(res2.statusCode).toEqual(200);
   });
 
+  it("GET /blocks/:indexOrHash not found", async () => {
+    const res1 = await request(app).get(`/blocks/10`);
+    expect(res1.statusCode).toEqual(404);
+  });
+
   it("POST /blocks with valid block", async () => {
     const tx = new Transaction({
       type: TransactionType.REGULAR,
@@ -135,13 +146,21 @@ describe("Blockchain Server", () => {
         amount: 10,
       } as TransactionInput),
     } as Transaction);
-    tx.txInput.sign(privateKey);
+    tx.txInput!.sign(privateKey);
     await request(app).post("/transactions").send(tx);
     const resNext = await request(app).get("/blocks/next");
     const blockinfo = resNext.body as BlockInfo;
     if (!blockinfo) throw new Error("Blockinfo is undefined");
 
     const newBlock = Block.fromBlockInfo(blockinfo);
+    newBlock.transactions.push(
+      new Transaction({
+        to: publicKey,
+        type: TransactionType.FEE,
+      } as Transaction)
+    );
+    newBlock.miner = publicKey;
+    newBlock.hash = newBlock.getHash();
     newBlock.mine(blockinfo.difficulty, publicKey);
 
     const res = await request(app).post("/blocks").send(newBlock);
@@ -152,5 +171,10 @@ describe("Blockchain Server", () => {
     const invalidBlock = new Block();
     const res = await request(app).post("/blocks").send(invalidBlock);
     expect(res.statusCode).toEqual(422);
+  });
+
+  it("POST /blocks with invalid block", async () => {
+    const res = await request(app).post("/blocks").send({ index: 1 });
+    expect(res.statusCode).toEqual(400);
   });
 });

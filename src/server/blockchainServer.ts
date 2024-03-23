@@ -73,7 +73,7 @@ app.post("/blocks", (req, res, next) => {
 
   const validation: Validation = blockchain.addBlock(block);
   if (validation.success) return res.status(201).json(block);
-  else return res.status(400).json({ message: "Block validation failed", validation });
+  else return res.status(400).json({ message: "Block validation failed", validation }); 
 }); 
 
 app.listen(PORT, () => {

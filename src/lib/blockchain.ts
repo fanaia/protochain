@@ -21,9 +21,9 @@ export default class Blockchain {
 
   constructor() {
     const keyPair = ECPair.makeRandom();
-    const privateKey = keyPair.privateKey?.toString("hex") || "";
+    const privateKey = keyPair.privateKey!.toString("hex");
     const publicKey = keyPair.publicKey.toString("hex");
-    
+
     this.blocks = [];
     this.memPool = [];
 
@@ -35,7 +35,7 @@ export default class Blockchain {
         amount: 1,
       } as TransactionInput,
     } as Transaction);
-    transaction0.txInput.sign(privateKey);
+    transaction0.txInput!.sign(privateKey);
 
     const genesisBlock = new Block({
       index: 0,
@@ -54,15 +54,21 @@ export default class Blockchain {
   }
 
   addTransaction(transaction: Transaction): Validation {
+    if (transaction.txInput) {
+      const fromAddress = transaction.txInput.fromAddress;
+      const pendingTxs = this.memPool.filter((tx) => tx.txInput!.fromAddress === fromAddress);
+      if (pendingTxs && pendingTxs.length)
+        return new Validation(false, "This wallet has a pending transaction.");
+
+      //TODO: Validar a origem dos fundos
+    }
+
     const validation = transaction.isValid();
     if (!validation.success)
       return new Validation(false, "Invalid transaction: " + validation.message);
 
     if (this.blocks.some((b) => b.transactions.some((t) => t.hash === transaction.hash)))
       return new Validation(false, "Duplicated tx in blockchain");
-
-    if (this.memPool.some((t) => t.hash === transaction.hash))
-      return new Validation(false, "Duplicated tx in mempool");
 
     this.memPool.push(transaction);
     return new Validation(true, transaction.hash);
@@ -73,7 +79,7 @@ export default class Blockchain {
     const validation = block.isValid(lastBlock.index, lastBlock.hash, this.getDifficulty());
     if (!validation.success) return validation;
 
-    const txs = block.transactions.map((tx) => tx.hash);
+    const txs = block.transactions.filter((tx) => tx.type !== TransactionType.FEE).map((tx) => tx.hash);
     const newMemPool = this.memPool.filter((tx) => !txs.includes(tx.hash));
     if (newMemPool.length + txs.length !== this.memPool.length)
       return new Validation(false, "Some transactions are not in the mempool");
@@ -87,7 +93,7 @@ export default class Blockchain {
   }
 
   getDifficulty(): number {
-    return Math.ceil(this.blocks.length / Blockchain.DIFFICULT_FACTOR);
+    return Math.ceil(this.blocks.length / Blockchain.DIFFICULT_FACTOR) + 1;
   }
 
   getBlock(hash: string): Block | undefined {
