@@ -7,15 +7,18 @@ import Blockchain from "../lib/blockchain";
 import Block from "../lib/block";
 import Validation from "../lib/validation";
 import Transaction from "../lib/transaction";
+import Wallet from "../lib/wallet";
+import TransactionOutput from "../lib/transactionOutput";
 
 const PORT: number = parseInt(`${process.env.BLOCKCHAIN_PORT}`);
+const wallet = new Wallet(process.env.BLOCKCHAIN_WALLET);
 
 const app = express();
 
 app.use(morgan("tiny"));
 app.use(express.json());
 
-const blockchain = new Blockchain();
+const blockchain = new Blockchain(wallet.publicKey);
 
 app.get("/status", (req, res, next) => {
   res.json({
@@ -73,11 +76,22 @@ app.post("/blocks", (req, res, next) => {
 
   const validation: Validation = blockchain.addBlock(block);
   if (validation.success) return res.status(201).json(block);
-  else return res.status(400).json({ message: "Block validation failed", validation }); 
-}); 
+  else return res.status(400).json({ message: "Block validation failed", validation });
+});
+
+app.get("/wallets/:wallet", (req, res, next) => {
+  const wallet = req.params.wallet;
+
+  const utxo = blockchain.getUtxo(wallet);
+  const balance = blockchain.getBalance(wallet);
+  const fee = blockchain.getFeePerTx();
+
+  return res.json({ balance, fee, utxo });
+});
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Wallet:\n ${wallet.publicKey} \n ${wallet.privateKey}`	)
 });
 
 export { app };

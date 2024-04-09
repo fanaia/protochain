@@ -6,6 +6,7 @@ import BlockInfo from "./blockInfo";
 import Transaction from "./transaction";
 import TransactionType from "./transactionType";
 import TransactionSearch from "./transactionSearch";
+import TransactionOutput from "./transactionOutput";
 import TransactionInput from "./transactionInput";
 
 const ECPair = ECPairFactory(ecc);
@@ -19,34 +20,30 @@ export default class Blockchain {
   memPool: Transaction[];
   nextIndex: number = 0;
 
-  constructor() {
-    const keyPair = ECPair.makeRandom();
-    const privateKey = keyPair.privateKey!.toString("hex");
-    const publicKey = keyPair.publicKey.toString("hex");
-
+  constructor(miner: string) {
     this.blocks = [];
     this.memPool = [];
 
-    const transaction0: Transaction = new Transaction({
-      type: TransactionType.FEE,
-      to: publicKey,
-      txInput: {
-        fromAddress: publicKey,
-        amount: 1,
-      } as TransactionInput,
-    } as Transaction);
-    transaction0.txInput!.sign(privateKey);
-
-    const genesisBlock = new Block({
-      index: 0,
-      previousHash: "",
-      transactions: [transaction0] as Transaction[],
-    } as Block);
-
-    genesisBlock.mine(0, "miner");
-
+    const genesisBlock = this.createGenesisBlock(miner);
     this.blocks.push(genesisBlock);
     this.nextIndex++;
+  }
+
+  createGenesisBlock(miner: string): Block {
+    const amount = 10; //TODO: calcular recompensa
+
+    const tx = new Transaction({
+      type: TransactionType.FEE,
+      txOutputs: [{ toAddress: miner, amount } as TransactionOutput],
+    } as Transaction);
+    tx.hash = tx.getHash();
+    tx.txOutputs![0].tx = tx.hash;
+
+    const block = new Block();
+    block.transactions = [tx];
+    block.mine(this.getDifficulty(), miner);
+
+    return block;
   }
 
   getLastBlock(): Block {
@@ -54,16 +51,29 @@ export default class Blockchain {
   }
 
   addTransaction(transaction: Transaction): Validation {
-    if (transaction.txInput) {
-      const fromAddress = transaction.txInput.fromAddress;
-      const pendingTxs = this.memPool.filter((tx) => tx.txInput!.fromAddress === fromAddress);
+    if (transaction.txInputs && transaction.txInputs.length) {
+      const from = transaction.txInputs[0].fromAddress;
+      const pendingTxs = this.memPool
+        .filter((tx) => tx.txInputs && tx.txInputs.length)
+        .map((tx) => tx.txInputs)
+        .flat()
+        .filter((tx) => tx!.fromAddress === from);
+
       if (pendingTxs && pendingTxs.length)
         return new Validation(false, "This wallet has a pending transaction.");
 
-      //TODO: Validar a origem dos fundos
+      const utxo = this.getUtxo(from);
+      for (let i = 0; i < transaction.txInputs.length; i++) {
+        const txIn = transaction.txInputs[i];
+        const index = utxo.findIndex(
+          (txo) => txo!.tx === txIn.previousTx && txo!.amount >= txIn.amount
+        );
+        if (index === -1)
+          return new Validation(false, "Invalid tx: the TXO is already spent or inexistent.");
+      }
     }
 
-    const validation = transaction.isValid();
+    const validation = transaction.isValid(this.getDifficulty(), this.getFeePerTx());
     if (!validation.success)
       return new Validation(false, "Invalid transaction: " + validation.message);
 
@@ -75,11 +85,20 @@ export default class Blockchain {
   }
 
   addBlock(block: Block): Validation {
-    const lastBlock = this.getLastBlock();
-    const validation = block.isValid(lastBlock.index, lastBlock.hash, this.getDifficulty());
-    if (!validation.success) return validation;
+    const nextBlock = this.getNextBlock();
+    if (!nextBlock) return new Validation(false, "There is no next block info");
 
-    const txs = block.transactions.filter((tx) => tx.type !== TransactionType.FEE).map((tx) => tx.hash);
+    const validation = block.isValid(
+      nextBlock.index - 1,
+      nextBlock.previousHash,
+      nextBlock.difficulty,
+      nextBlock.feePerTx
+    );
+    if (!validation.success) return new Validation(false, "Invalid block: " + validation.message);
+
+    const txs = block.transactions
+      .filter((tx) => tx.type !== TransactionType.FEE)
+      .map((tx) => tx.hash);
     const newMemPool = this.memPool.filter((tx) => !txs.includes(tx.hash));
     if (newMemPool.length + txs.length !== this.memPool.length)
       return new Validation(false, "Some transactions are not in the mempool");
@@ -131,7 +150,8 @@ export default class Blockchain {
       const validation = currentBlock.isValid(
         previousBlock.index,
         previousBlock.hash,
-        this.getDifficulty()
+        this.getDifficulty(),
+        this.getFeePerTx()
       );
       if (!validation.success)
         return new Validation(false, `Invalid block #${currentBlock.index}: ${validation.message}`);
@@ -163,5 +183,50 @@ export default class Blockchain {
       feePerTx,
       maxDifficulty,
     } as BlockInfo;
+  }
+
+  getTxInputs(wallet: string): (TransactionInput | undefined)[] {
+    return this.blocks
+      .map((tx) => tx.transactions)
+      .flat()
+      .filter((tx) => tx.txInputs && tx.txInputs.length)
+      .map((tx) => tx.txInputs)
+      .flat()
+      .filter((tx) => tx!.fromAddress === wallet);
+  }
+
+  getTxOutputs(wallet: string): (TransactionOutput | undefined)[] {
+    return this.blocks
+      .map((tx) => tx.transactions)
+      .flat()
+      .filter((tx) => tx.txOutputs && tx.txOutputs.length)
+      .map((tx) => tx.txOutputs)
+      .flat()
+      .filter((tx) => tx!.toAddress === wallet);
+  }
+
+  getUtxo(wallet: string): (TransactionOutput | undefined)[] {
+    const txIns = this.getTxInputs(wallet);
+    const txOuts = this.getTxOutputs(wallet);
+
+    if (!txIns || !txIns.length) return txOuts;
+
+    txIns.forEach((txIn) => {
+      const index = txOuts.findIndex((txo) => txo!.amount === txIn!.amount);
+      if (index !== -1) txOuts.splice(index, 1);
+    });
+
+    return txOuts;
+  }
+
+  getBalance(wallet: string): number {
+    const utxo = this.getUtxo(wallet);
+    if (!utxo || !utxo.length) return 0;
+
+    return utxo.reduce((acc, txo) => acc + txo!.amount, 0);
+  }
+
+  static getRewardAmout(difficulty: number): number {
+    return (64 - difficulty) * 10;
   }
 }

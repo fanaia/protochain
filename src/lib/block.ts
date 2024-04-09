@@ -47,7 +47,12 @@ export default class Block {
     this.hash = hash;
   }
 
-  isValid(previousIndex: number, previousHash: string, difficulty: number): Validation {
+  isValid(
+    previousIndex: number,
+    previousHash: string,
+    difficulty: number,
+    feePerTx: number
+  ): Validation {
     if (!this.transactions || this.transactions.length < 1)
       return new Validation(false, "No transactions");
 
@@ -55,10 +60,12 @@ export default class Block {
     if (!feeTxs.length) return new Validation(false, "No fee tx");
     if (feeTxs.length > 1) return new Validation(false, "Too many fees");
 
-    if (feeTxs[0]!.to !== this.miner)
+    if (!feeTxs[0].txOutputs?.some((txo) => txo.toAddress === this.miner))
       return new Validation(false, "Invalid fee tx: different from miner");
 
-    const validationsTx = this.transactions.map((tx) => tx.isValid());
+    const totalFees =
+      feePerTx * this.transactions.filter((tx) => tx.type != TransactionType.FEE).length;
+    const validationsTx = this.transactions.map((tx) => tx.isValid(difficulty, totalFees));
     const errorsTx = validationsTx.filter((v) => !v.success).map((v) => v.message);
 
     if (errorsTx.length > 0)
@@ -67,7 +74,7 @@ export default class Block {
     if (this.index !== previousIndex + 1) return new Validation(false, "Invalid previousIndex");
     if (this.timestamp < 1) return new Validation(false, "Invalid timestamp");
     if (this.previousHash !== previousHash) return new Validation(false, "Invalid previousHash");
-    if (!this.nonce || !this.miner) return new Validation(false, "No mined block");
+    if (this.nonce! < 1 || !this.miner) return new Validation(false, "No mined block");
 
     const prefix = new Array(difficulty + 1).join("0");
     if (this.hash !== this.getHash() || !this.hash.startsWith(prefix))
